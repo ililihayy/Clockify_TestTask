@@ -71,18 +71,15 @@ def convert_iso_duration(duration):
     return time_delta
 
 
-def convert_to_stdout(tasks):
+def convert_to_stdout(general_tasks, tasks_with_date, print_option="yes"):
+
+    tasks = combine_tasks(general_tasks, tasks_with_date)
+
     per_task = {}
     for task in tasks:
         task_name = task['name']
         duration = convert_iso_duration(task['duration'])
         per_task[task_name] = duration
-
-    print("\nTime spent on each task:\n")
-    for key, value in per_task.items():
-        print(f"Task: {key} \nDuration: {value}")
-
-    print('\n\n')
 
     grouped_by_date = {}
     for task in tasks:
@@ -95,9 +92,17 @@ def convert_to_stdout(tasks):
         else:
             grouped_by_date[day] = duration
 
-    print("Spent time per day\n")
-    for key, value in grouped_by_date.items():
-         print(f"Date: {key} \nDuration: {value}")
+    
+    if print_option == "yes":
+        print("\nTime spent on each task:\n")
+        for key, value in per_task.items():
+            print(f"Task: {key} \nDuration: {value}")
+
+        print('\n\n')
+
+        print("Spent time per day\n")
+        for key, value in grouped_by_date.items():
+            print(f"Date: {key} \nDuration: {value}")
 
     return per_task, grouped_by_date
 
@@ -112,9 +117,6 @@ def combine_tasks(task1, task2):
 
         for second_task in task2:
             if id == second_task['taskId']:
-                
-                print(second_task)
-
                 time_interval = second_task['timeInterval']
                 task_dict = {
                     'name': name,
@@ -153,7 +155,5 @@ if __name__ == "__main__":
     tasks = get_tasks_from_api(api_key, workspace_id, project_id)
     tasks_with_date = get_task_with_date(api_key, workspace_id, user_id)
 
-    combined_tasks = combine_tasks(tasks, tasks_with_date)
-    
-    per_task, grouped_by_date = convert_to_stdout(combined_tasks)
+    per_task, grouped_by_date = convert_to_stdout(tasks, tasks_with_date)
     write_to_file("Report.txt", per_task, grouped_by_date)

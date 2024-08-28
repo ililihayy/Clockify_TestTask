@@ -1,9 +1,15 @@
 import requests
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 
-def get_tasks_from_api(api_key, workspace_id, project_id):
-    url = f'https://api.clockify.me/api/v1/workspaces/{workspace_id}/projects/{project_id}/tasks'
+def _selectDataFromAPi(api_key, url):
+    
+    """
+    The function that returns data at the specified api and address
+
+    Returns:
+        list: data or empty list
+    """
 
     headers = {
         'X-Api-Key': api_key,
@@ -14,34 +20,43 @@ def get_tasks_from_api(api_key, workspace_id, project_id):
 
 
     if response.status_code == 200:
-        tasks = response.json()
-        return tasks
+        data = response.json()
+        return data
     else:
         print(f"Can't connect. Status: {response.status_code}")
         return []
 
 
-# function to get records about the start date of the task
-def get_task_with_date(api_key, workspace_id, user_id):
+def getTasksGeneralInfo(api_key, workspace_id, project_id):
+    
+    """
+    The function that returns data about tasks.
+
+    Returns:
+        list: tasks
+    """
+
+    url = f'https://api.clockify.me/api/v1/workspaces/{workspace_id}/projects/{project_id}/tasks'
+    tasks = _selectDataFromAPi(api_key, url)
+    return tasks
+
+
+def getTimeEntries(api_key, workspace_id, user_id):
+   
+    """
+    The function that returns data about time entries.
+
+    Returns:
+        list: time entries
+    """
+
     url = f'https://api.clockify.me/api/v1/workspaces/{workspace_id}/user/{user_id}/time-entries'
 
-    headers = {
-        'X-Api-Key': api_key,
-        'Content-Type': 'application/json'
-    }
-
-    response = requests.get(url, headers=headers)
-
-    if response.status_code == 200:
-        tasks = response.json()
-        return tasks
-    else:
-        print(f"Can't connect. Status: {response.status_code}")
-        return []
+    tasks = _selectDataFromAPi(api_key, url)
+    return tasks
 
 
-# function to convert the duration format
-def convert_iso_duration(duration):
+def convertDurationToISO(duration):
     if duration is None:
         return timedelta(hours=0, minutes=0, seconds=0)
 
@@ -71,89 +86,146 @@ def convert_iso_duration(duration):
     return time_delta
 
 
-def convert_to_stdout(general_tasks, tasks_with_date, print_option="yes"):
+def combineTaskWithTimeEntries(tasks, time_entries):
 
-    tasks = combine_tasks(general_tasks, tasks_with_date)
-
-    per_task = {}
-    for task in tasks:
-        task_name = task['name']
-        duration = convert_iso_duration(task['duration'])
-        per_task[task_name] = duration
-
-    grouped_by_date = {}
-    for task in tasks:
-        date = task['timeInterval']['start']
-        day = date.split("T")[0]
-        duration = convert_iso_duration(task['duration'])
-        
-        if day in grouped_by_date.keys():
-            grouped_by_date[day] += duration
-        else:
-            grouped_by_date[day] = duration
-
+    """
+    This function combines records of tasks and their completion dates. 
+    First, create a dictionary with a key: task id and value - 
+    a list of records of the start and end dates. 
+    After that, create a dictionary of the format:
     
-    if print_option == "yes":
-        print("\nTime spent on each task:\n")
-        for key, value in per_task.items():
-            print(f"Task: {key} \nDuration: {value}")
+    task_dict = {
+                    'name': name,
+                    'duration': duration,
+                    'timeIntervals': time_intervals
+                }
+    
+    and add to the list "combined_tasks".
 
-        print('\n\n')
+    Returns:
+        list: combined tasks
+    """
 
-        print("Spent time per day\n")
-        for key, value in grouped_by_date.items():
-            print(f"Date: {key} \nDuration: {value}")
+    sorted_entries = {}
+    for entire in time_entries:
+        task_id = entire['taskId']
+        if task_id not in sorted_entries.keys():
+            sorted_entries[task_id] = []
 
-    return per_task, grouped_by_date
+        time_interval = entire['timeInterval']
+        sorted_entries[task_id].append(time_interval)
 
-
-# function to combine tasks by id and get data about the start date
-def combine_tasks(task1, task2):
-    new_tasks = []
-    for task in task1:
+    combined_tasks = []
+    for task in tasks:
         name = task['name']
         duration = task['duration']
         id = task['id']
 
-        for second_task in task2:
-            if id == second_task['taskId']:
-                time_interval = second_task['timeInterval']
-                task_dict = {
+        if sorted_entries.get(id) is None:
+            time_intervals = None
+        else:
+            time_intervals = sorted_entries[id]
+
+        task_dict = {
                     'name': name,
                     'duration': duration,
-                    'timeInterval': time_interval
+                    'timeIntervals': time_intervals
                 }
+        
+        combined_tasks.append(task_dict)
 
-                new_tasks.append(task_dict)
-
-    return new_tasks
+    return combined_tasks
 
 
-def write_to_file(path, per_task, grouped_by_date):
+def convertToStdout(general_tasks, time_entries, print_option="yes"):
+
+    """
+    This function returns two dictionaries: 
+    the first one contains a description of the task and the duration of its execution, 
+    and the other one contains the total time spent on that day for each date. 
+    There is also an output option that outputs two dictionaries by default, 
+    but you can change it by setting this parameter in the function call.
+
+    """
+
+    tasks = combineTaskWithTimeEntries(general_tasks, time_entries)
+
+    per_task = {}
+    for task in tasks:
+        task_name = task['name']
+        duration = convertDurationToISO(task['duration'])
+        per_task[task_name] = duration
+
+
+    grouped_by_date = {}
+    for task in tasks:
+        time_intervals = task['timeIntervals']
+        if time_intervals is None:
+            continue
+
+        for interval in time_intervals:
+            start_date_str = interval['start']
+            end_date_str = interval['end']
+
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%dT%H:%M:%SZ')
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%dT%H:%M:%SZ')
+
+            duration = end_date - start_date
+            day = start_date_str.split("T")[0]
+
+            if day in grouped_by_date.keys():
+                grouped_by_date[day] += duration
+            else:
+                grouped_by_date[day] = duration
+
+    if print_option == "yes":
+        printOutput(per_task, grouped_by_date)
+
+    return per_task, grouped_by_date
+
+
+def _formatOutput(per_task, grouped_by_date):
+
+    """
+    this function returns the generated report (string),
+    which can then be displayed on the console or written to a file
+
+    """
+
+    lines = []
+
+    lines.append("Time spent on each task:")
+    for key, value in per_task.items():
+        lines.append(f"Task: {key} \nDuration: {value}\n")
+
+    lines.append('\n\n')
+
+    lines.append("Spent time per day:")
+    for key, value in grouped_by_date.items():
+        lines.append(f"Date: {key} \nDuration: {value}\n")
+
+    return "\n".join(lines)
+
+def printOutput(per_task, grouped_by_date):
+    output = _formatOutput(per_task, grouped_by_date)
+    print(output)
+
+def writeToFile(path, per_task, grouped_by_date):
+    output = _formatOutput(per_task, grouped_by_date)
     with open(path, 'w', encoding='utf-8') as file:
-        file.write("Time spent on each task:\n")
-        for key, value in per_task.items():
-            line = f"Task: {key} \nDuration: {value}\n"
-            file.write(line)
+        file.write(output)
 
-        file.write('\n\n')
-
-        file.write("Spent time per day\n")
-        for key, value in grouped_by_date.items():
-            line = f"Date: {key} \nDuration: {value}\n"
-            file.write(line) 
-    
 
 if __name__ == "__main__":
-    # my data for example
-    api_key = "YmM4NjAxNGMtZTg4OC00MWIzLWFjNDEtYjhlNDk3NTRiYTJl"
+
+    api_key = "NTUxOTBjYjEtZjk4Yy00NDMyLWIwODAtZmU5YTM4YWE5ZGM3"
 
     workspace_id = "66c497f4e355191cb4517df5"
     project_id = "66c498c6e355191cb451a286"
     user_id = "66c497f4e355191cb4517df9"
 
-    tasks = get_tasks_from_api(api_key, workspace_id, project_id)
-    tasks_with_date = get_task_with_date(api_key, workspace_id, user_id)
-
-    per_task, grouped_by_date = convert_to_stdout(tasks, tasks_with_date)
-    write_to_file("Report.txt", per_task, grouped_by_date)
+    tasks = getTasksGeneralInfo(api_key, workspace_id, project_id)
+    time_entries = getTimeEntries(api_key, workspace_id, user_id)
+ 
+    per_task, grouped_by_date = convertToStdout(tasks, time_entries)
+    writeToFile("Report.txt", per_task, grouped_by_date)
